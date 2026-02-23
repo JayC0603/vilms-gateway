@@ -33,6 +33,17 @@ Current example uses `ollama` with:
 - Gateway container port: `8000`
 - Internal Ollama backend: `http://vilms-ollama:11434`
 
+### Preferred Combo (Current Default)
+
+- `LLM`: `Qwen3-4B-Instruct`
+- `VLM`: `Qwen3VL-4B-Instruct`
+- `Embbeding`: `Qwen3-Embbeding-4B`
+
+Aliases in `app/configs/config.yaml` are configured for this combo:
+- `LLM`
+- `VLM`
+- `Embedding` / `Embbeding`
+
 ## 4. Run Services
 
 ### Quick Start (WSL + avoid registry TLS issues)
@@ -163,7 +174,7 @@ The gateway converts OpenAI-style vision payloads to Ollama native `/api/chat` w
 curl -X POST http://localhost:8989/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "VLM_SMALL",
+    "model": "VLM",
     "messages": [
       {
         "role": "user",
@@ -197,6 +208,28 @@ curl -X POST http://localhost:8989/v1/embeddings \
     "model": "Embbeding",
     "input": "xin chao"
   }'
+```
+
+### Sequential Test (Recommended on Low-RAM / CPU Fallback)
+
+Test one model at a time (especially for `VLM` and `Embbeding`):
+
+```bash
+time curl -sS -i --max-time 300 http://localhost:8989/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"LLM","messages":[{"role":"user","content":"Tra loi ngan: 1+1=?"}],"stream":false}'
+```
+
+```bash
+time curl -sS -i --max-time 900 http://localhost:8989/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"VLM","messages":[{"role":"user","content":"Mo ta ngan chuc nang cua VLM."}],"stream":false}'
+```
+
+```bash
+time curl -sS -i --max-time 1200 http://localhost:8989/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Embbeding","input":"xin chao"}'
 ```
 
 ## 6. Quick Check Commands
