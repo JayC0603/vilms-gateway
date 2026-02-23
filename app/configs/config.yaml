@@ -1,0 +1,76 @@
+host:
+  platform: dgpu
+  cuda-version: "12.6"
+
+docker:
+  docker-registry: docker-registry.viais.vision
+  docker-project: vilms
+  docker-network: qvision
+  tag:
+    gateway: latest
+    engine: latest
+
+serving:
+  # Ollama runs a single "serve" service; model is selected by the "model" field in the payload
+  # CPU-safe mode: use Ollama as chat backend. (Switch back to vllm when Docker GPU is available.)
+  engine: ollama
+
+  # Primary chat backend URL (backward compatible)
+  # Use localhost when running gateway directly from IDE/host machine.
+  # Use http://vilms-ollama:11434/... only when gateway runs inside Docker network.
+  base-url: http://vilms-ollama:11434/v1/chat/completions
+  # Optional split URLs (kept for future GPU/vLLM setup):
+  vllm-base-url: http://vilms-vllm:8000
+  ollama-base-url: http://vilms-ollama:11434/v1/chat/completions
+  models:
+    # ===== Preferred combo (Qwen3) =====
+    - name: qwen3:4b-instruct
+      params:
+        - temperature: 0.7
+        - max-tokens: 1024
+        - stream: false
+      # Optional path for spaw.sh when generating vLLM services in engine=vllm mode
+      # path: models/hf/Qwen3-4B-Instruct
+
+    - name: qwen3-vl:4b-instruct
+      params:
+        - max-frames: 8
+        - temperature: 0.7
+        - max-tokens: 1024
+        - stream: false
+
+    - name: llava-phi3
+      params:
+        - temperature: 0.7
+        - max-tokens: 512
+        - stream: false
+
+# Embeddings are separate from chat completions
+embedding:
+  enabled: true
+  # HF model name (if you run embeddings via transformers/sentence-transformers)
+  model: Qwen/Qwen3-Embedding-4B
+
+  # If you run a separate embedding service, enable this and point the gateway to it:
+  # base-url: http://vilms-embedding:8001/v1/embeddings
+
+model-aliases:
+  LLM: Qwen3-4B-Instruct
+  VLM: Qwen3VL-4B-Instruct
+  VLM_SMALL: LlavaPhi3
+  Embedding: Qwen3-Embedding-4B
+  Embbeding: Qwen3-Embbeding-4B
+  llm: Qwen3-4B-Instruct
+  vlm: Qwen3VL-4B-Instruct
+  vlm_small: LlavaPhi3
+  embedding: Qwen3-Embedding-4B
+  embbeding: Qwen3-Embbeding-4B
+  qwen3-4b-instruct: qwen3:4b-instruct
+  qwen3vl-4b-instruct: qwen3-vl:4b-instruct
+  qwen3-embedding-4b: Qwen/Qwen3-Embedding-4B
+  qwen3-embbeding-4b: Qwen/Qwen3-Embedding-4B
+  Qwen3-4B-Instruct: qwen3:4b-instruct
+  Qwen3VL-4B-Instruct: qwen3-vl:4b-instruct
+  LlavaPhi3: llava-phi3
+  Qwen3-Embedding-4B: Qwen/Qwen3-Embedding-4B
+  Qwen3-Embbeding-4B: Qwen/Qwen3-Embedding-4B

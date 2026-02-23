@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+httpx
+opencv-python
+opencv-python-headless
+numpy
+python-dotenv
+pyyaml
+sentence-transformers

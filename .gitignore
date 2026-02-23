@@ -1,0 +1,4 @@
+*.env
+*.log*
+assets/logs/*
+assets/models/*

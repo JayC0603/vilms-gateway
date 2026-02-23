@@ -1,0 +1,66 @@
+﻿CHI TIET CAC TASK DA LAM - ViLMS Gateway
+
+1) Hoan thien gateway API theo chuan OpenAI
+- Tao app FastAPI + CORS + startup hook: app/main.py
+- Expose route health check: app/routes.py
+- Expose chat completions: app/routes.py
+- Expose embeddings: app/routes.py
+- Co che tra loi HTTP 400 khi backend/logic loi: app/routes.py
+
+2) Thiet ke lop config dung YAML
+- Doc config tu app/configs/config.yaml: app/config.py
+- Chuan hoa params tu list/dict ve dict: app/config.py
+- Bo sung compatibility aliases (ENGINE, MODELS, BASE_URL,...): app/config.py
+- Tach ro cau hinh chat/embedding/model aliases: app/config.py, app/configs/config.yaml
+
+3) Xay dung engine factory + routing model
+- Khoi tao Ollama engine, vLLM engine, embedding engine theo config: app/cores/factory.py
+- Rule chon engine chat theo engine config / host platform / model VL: app/cores/factory.py
+- Mapping model alias truoc khi goi backend: app/cores/factory.py
+
+4) Tich hop backend Ollama va vLLM voi fallback host
+- Ollama:
+  - Build endpoint /v1/chat/completions
+  - Retry qua candidate hosts (localhost <-> vilms-ollama)
+  - Forward tham so OpenAI (temperature, max_tokens, top_p,...): app/engines/ollama_engine.py
+- vLLM:
+  - Ho tro base-url thuong va base-url dang format string
+  - Retry candidate hosts (localhost <-> vilms-*): app/engines/vllm_engine.py
+
+5) Tich hop embeddings noi bo
+- Lazy-load sentence-transformers
+- Model mac dinh Qwen/Qwen3-Embedding-4B
+- Tra vector dang list float: app/engines/embedding_engine.py
+
+6) Toi uu payload cho Jetson
+- Cat so luong anh/frame ve DEFAULT_MAX_FRAMES
+- Giu schema OpenAI vision (text + image_url): app/services/optimizer.py
+
+7) Bo sung validate config dau vao
+- Validate bat buoc serving.engine, serving.base-url, serving.models
+- Chuan hoa models/params
+- Tra warnings/errors ro rang
+- Co CLI validate config: app/services/validator.py
+
+8) Chuan hoa schema request/response
+- Pydantic models cho chat + embeddings: app/schemas/openai.py
+- Co optional fields de tuong thich OpenAI (top_p, penalties, stop...): app/schemas/openai.py
+
+9) Tu dong hoa chay bang Docker
+- Script sinh docker-compose.yaml tu config: spaw.sh
+- Ho tro auto-install yq, chon ollama/vllm, generate service theo model
+- Ho tro bien moi truong AUTO_UP, AUTO_BUILD, INCLUDE_GATEWAY_BUILD, GATEWAY_PULL_POLICY
+- Script start auto-create docker network: start.sh
+- Script stop cleanup service/orphans: stop.sh
+- Compose hien tai co gateway + ollama + external network: docker-compose.yaml
+
+10) Hoan thien tai lieu van hanh
+- README co quick start, flow khuyen nghi, API mau, test command, huong dan xu ly loi TLS registry: README.md
+
+11) Da co test API va test pass
+- Test /health_check, chat method not allowed, chat success, embeddings disabled, embeddings success
+- Ket qua: python -m unittest tests/test_api.py -v => 5/5 OK
+
+Ghi chu:
+- Danh sach tren dua tren artifact hien co trong repo (code/script/README/test).
+- Chua xac dinh thu tu thoi gian hoac ai commit tung phan vi git root dang tro ra C:/Users/Admin.
