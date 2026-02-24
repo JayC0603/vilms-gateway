@@ -10,6 +10,7 @@ import yaml
 
 
 SUPPORTED_ENGINES = {"ollama", "vllm", "openai"}
+SUPPORTED_MODEL_TYPES = {"llm", "vlm", "embedding", "reranker"}
 
 
 @dataclass
@@ -70,6 +71,46 @@ def normalize_params(params: Any) -> Dict[str, Any]:
         return out
 
     return {}
+
+
+def _normalize_model_type(value: Any) -> Optional[str]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip().lower()
+    aliases = {
+        "text": "llm",
+        "chat": "llm",
+        "llm": "llm",
+        "vision": "vlm",
+        "multimodal": "vlm",
+        "vlm": "vlm",
+        "embed": "embedding",
+        "embedding": "embedding",
+        "rerank": "reranker",
+        "reranker": "reranker",
+    }
+    return aliases.get(raw, raw)
+
+
+def _normalize_aliases(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        s = value.strip()
+        return [s] if s else []
+    if not isinstance(value, list):
+        return []
+    out: List[str] = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        alias = item.strip()
+        if not alias or alias in seen:
+            continue
+        seen.add(alias)
+        out.append(alias)
+    return out
 
 
 def validate_config_dict(cfg: Dict[str, Any]) -> ValidationResult:
@@ -153,6 +194,29 @@ def validate_config_dict(cfg: Dict[str, Any]) -> ValidationResult:
         m2 = dict(m)
         m2["name"] = name.strip()
         m2["params"] = normalize_params(m.get("params"))
+        m2["aliases"] = _normalize_aliases(m.get("aliases"))
+
+        model_type = _normalize_model_type(m.get("type"))
+        if model_type is not None:
+            m2["type"] = model_type
+            if model_type not in SUPPORTED_MODEL_TYPES:
+                warnings.append(
+                    f"serving.models[{i}].type='{model_type}' is not in supported list "
+                    f"{sorted(SUPPORTED_MODEL_TYPES)}. Runtime may ignore special routing."
+                )
+
+        model_engine = m.get("engine", m.get("backend"))
+        if model_engine is not None:
+            if not isinstance(model_engine, str) or not model_engine.strip():
+                errors.append(f"serving.models[{i}].engine must be a non-empty string when provided.")
+            else:
+                engine_norm = model_engine.strip().lower()
+                m2["engine"] = engine_norm
+                if engine_norm not in SUPPORTED_ENGINES:
+                    warnings.append(
+                        f"serving.models[{i}].engine='{engine_norm}' is not in supported list "
+                        f"{sorted(SUPPORTED_ENGINES)}. Runtime may fail to route."
+                    )
 
         path = m2.get("path")
         if isinstance(path, str) and path.strip():

@@ -26,6 +26,55 @@ def _normalize_params(params: Any) -> Dict[str, Any]:
     return {}
 
 
+def _normalize_model_type(value: Any) -> Optional[str]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip().lower()
+    aliases = {
+        "text": "llm",
+        "chat": "llm",
+        "llm": "llm",
+        "vision": "vlm",
+        "multimodal": "vlm",
+        "vlm": "vlm",
+        "embed": "embedding",
+        "embedding": "embedding",
+        "rerank": "reranker",
+        "reranker": "reranker",
+    }
+    return aliases.get(raw, raw)
+
+
+def _normalize_model_engine(value: Any) -> Optional[str]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip().lower()
+    if raw in {"ollama", "vllm", "openai"}:
+        return raw
+    return raw
+
+
+def _normalize_model_aliases(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        s = value.strip()
+        return [s] if s else []
+    if isinstance(value, list):
+        out: List[str] = []
+        seen = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            alias = item.strip()
+            if not alias or alias in seen:
+                continue
+            seen.add(alias)
+            out.append(alias)
+        return out
+    return []
+
+
 class AppConfig:
     """
     Minimal YAML config loader.
@@ -78,9 +127,46 @@ class AppConfig:
             if not isinstance(m, dict):
                 continue
             m2 = dict(m)
+            m2["name"] = str(m.get("name", "")).strip()
             m2["params"] = _normalize_params(m.get("params"))
+            # Optional per-model metadata for extensible routing/selection.
+            m2["type"] = _normalize_model_type(m.get("type"))
+            m2["engine"] = _normalize_model_engine(m.get("engine", m.get("backend")))
+            m2["aliases"] = _normalize_model_aliases(m.get("aliases"))
             out.append(m2)
         return out
+
+    def resolve_alias(self, model: str) -> str:
+        current = model
+        seen = set()
+        aliases = self.MODEL_ALIASES
+
+        while isinstance(current, str) and current in aliases and current not in seen:
+            seen.add(current)
+            nxt = aliases.get(current)
+            if not isinstance(nxt, str) or not nxt or nxt == current:
+                break
+            current = nxt
+        return current
+
+    def find_model(self, model: str) -> Optional[Dict[str, Any]]:
+        """Find model metadata by requested name, alias, or canonical name."""
+        if not isinstance(model, str) or not model.strip():
+            return None
+
+        requested = model.strip()
+        canonical = self.resolve_alias(requested)
+
+        for m in self.models:
+            name = str(m.get("name", "")).strip()
+            if not name:
+                continue
+            if requested == name or canonical == name:
+                return m
+            aliases = m.get("aliases", [])
+            if isinstance(aliases, list) and (requested in aliases or canonical in aliases):
+                return m
+        return None
 
     # ---------- Compatibility aliases (so existing code using settings.ENGINE works) ----------
     @property
@@ -117,7 +203,17 @@ class AppConfig:
     @property
     def MODEL_ALIASES(self) -> Dict[str, str]:
         aliases = self.data.get("model-aliases", {})
-        return dict(aliases) if isinstance(aliases, dict) else {}
+        out = dict(aliases) if isinstance(aliases, dict) else {}
+        # Allow local aliases directly in serving.models[*].aliases without forcing duplication
+        # in the global "model-aliases" block.
+        for m in self.models:
+            name = m.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            for alias in m.get("aliases", []):
+                if alias not in out:
+                    out[alias] = name
+        return out
 
     @property
     def EMBEDDING_MODEL(self) -> str:

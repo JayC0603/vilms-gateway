@@ -2,3 +2,13 @@
 *.log*
 assets/logs/*
 assets/models/*
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/

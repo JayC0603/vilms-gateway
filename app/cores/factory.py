@@ -19,41 +19,49 @@ class EngineFactory:
             return self.vllm
         raise ValueError(f"Unsupported engine: {name}")
 
-    def resolve_chat_engine(self, model: str):
+    def resolve_chat_engine_name(self, model: str) -> str:
         """
-        Decide which engine should handle chat completion.
+        Decide which engine should handle a chat completion.
 
         Priority:
-        - If config ENGINE=ollama -> always use ollama
-        - If Jetson -> always use ollama
-        - If dGPU -> use ollama for VL models, vllm for text models
+        - Global serving.engine=ollama -> force ollama
+        - Jetson -> prefer ollama
+        - Per-model engine override in config (serving.models[*].engine)
+        - Per-model type=vlm -> ollama
+        - Fallback legacy heuristic on model name ("vl")
+        - Default -> vllm
         """
+        model = model or ""
+        model_cfg = settings.find_model(model)
 
         # If user config chooses ollama engine, force route to ollama
         if getattr(settings, "ENGINE", "").lower() == "ollama":
-            return self.ollama
+            return "ollama"
 
         # Jetson: prefer Ollama for both LLM and VLM
         if settings.HOST_PLATFORM == "js":
-            return self.ollama
+            return "ollama"
 
-        # dGPU: route as you prefer
+        if isinstance(model_cfg, dict):
+            model_engine = (model_cfg.get("engine") or "").strip().lower()
+            if model_engine in {"ollama", "vllm"}:
+                return model_engine
+
+        if isinstance(model_cfg, dict):
+            model_type = (model_cfg.get("type") or "").strip().lower()
+            if model_type == "vlm":
+                return "ollama"
+            if model_type == "llm":
+                return "vllm"
+
+        # Backward-compatible fallback when model metadata is absent
         if "VL" in model or "vl" in model:
-            return self.ollama
+            return "ollama"
+        return "vllm"
 
-        return self.vllm
+    def resolve_chat_engine(self, model: str):
+        return self.get_engine(self.resolve_chat_engine_name(model))
 
     def map_model_alias(self, model: str) -> str:
         # Resolve chained aliases, e.g. LLM -> Qwen3-4B-Instruct -> qwen3:4b-instruct
-        current = model
-        seen = set()
-        aliases = settings.MODEL_ALIASES
-
-        while isinstance(current, str) and current in aliases and current not in seen:
-            seen.add(current)
-            nxt = aliases.get(current)
-            if not isinstance(nxt, str) or not nxt or nxt == current:
-                break
-            current = nxt
-
-        return current
+        return settings.resolve_alias(model)

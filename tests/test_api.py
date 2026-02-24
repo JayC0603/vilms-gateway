@@ -47,7 +47,10 @@ class ApiTests(unittest.TestCase):
 
     def test_chat_completion_method_not_allowed(self):
         res = self.client.get("/v1/chat/completions")
-        self.assertEqual(res.status_code, 405)
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["detail"], "Method Not Allowed")
+        self.assertIn("Use POST /v1/chat/completions", body["hint"])
 
     def test_chat_completion_success(self):
         routes.factory.map_model_alias = lambda m: m

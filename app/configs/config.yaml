@@ -6,6 +6,11 @@ docker:
   docker-registry: docker-registry.viais.vision
   docker-project: vilms
   docker-network: qvision
+  image:
+    # Optional override for Ollama image repo (useful on Jetson/aarch64).
+    # Example Jetson: set to your ARM64-compatible Ollama image repo, then keep docker.tag.engine as the image tag.
+    # ollama: <your-jetson-ollama-image-repo>
+    ollama: ollama/ollama
   tag:
     gateway: latest
     engine: latest
@@ -25,6 +30,10 @@ serving:
   models:
     # ===== Preferred combo (Qwen3) =====
     - name: qwen3:4b-instruct
+      type: llm
+      # Optional per-model routing override (used by gateway when mixed backends are available)
+      # engine: vllm
+      aliases: [LLM_SMALL]
       params:
         - temperature: 0.7
         - max-tokens: 1024
@@ -33,14 +42,21 @@ serving:
       # path: models/hf/Qwen3-4B-Instruct
 
     - name: qwen3-vl:4b-instruct
+      type: vlm
+      # engine: ollama
+      aliases: [VLM_SMALL]
       params:
         - max-frames: 8
         - temperature: 0.7
         - max-tokens: 1024
         - stream: false
+  # Gateway-side payload optimizer also uses this on Jetson (host.platform=js)
+  # to keep only the latest N image frames in OpenAI-style vision requests.
+  default-max-frames: 8
 
 # Embeddings are separate from chat completions
 embedding:
+  # Jetson bring-up recommendation: set false first, then enable if resource budget allows.
   enabled: true
   # HF model name (if you run embeddings via transformers/sentence-transformers)
   model: Qwen/Qwen3-Embedding-4B

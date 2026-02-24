@@ -76,6 +76,8 @@ PROJECT="$(yq_get '.docker.docker-project')"
 NET_NAME="$(yq_get '.docker.docker-network')"
 GW_TAG="$(yq_get '.docker.tag.gateway')"
 ENGINE_TAG="$(yq_get '.docker.tag.engine')"
+HOST_PLATFORM="$(yq_get '.host.platform')"
+OLLAMA_IMAGE_CFG="$(yq_get '.docker.image.ollama')"
 MODEL_COUNT="$(yq_get '.serving.models | length')"
 EMBEDDING_ENABLED="$(yq_get '.embedding.enabled')"
 EMBEDDING_MODEL="$(yq_get '.embedding.model')"
@@ -85,6 +87,25 @@ require_non_empty "docker.docker-project" "$PROJECT"
 require_non_empty "docker.docker-network" "$NET_NAME"
 require_non_empty "docker.tag.gateway" "$GW_TAG"
 require_non_empty "docker.tag.engine" "$ENGINE_TAG"
+
+if [[ -z "$HOST_PLATFORM" || "$HOST_PLATFORM" == "null" ]]; then
+    HOST_PLATFORM="dgpu"
+fi
+
+# Optional override for Ollama image repository (useful for Jetson/aarch64 builds).
+# Priority: env OLLAMA_IMAGE > config docker.image.ollama > default repo.
+if [[ -n "${OLLAMA_IMAGE:-}" ]]; then
+    OLLAMA_IMAGE_REPO="$OLLAMA_IMAGE"
+elif [[ -n "$OLLAMA_IMAGE_CFG" && "$OLLAMA_IMAGE_CFG" != "null" ]]; then
+    OLLAMA_IMAGE_REPO="$OLLAMA_IMAGE_CFG"
+else
+    OLLAMA_IMAGE_REPO="ollama/ollama"
+fi
+
+GATEWAY_WORKERS="2"
+if [[ "$HOST_PLATFORM" == "js" ]]; then
+    GATEWAY_WORKERS="1"
+fi
 
 # ================================================================
 # 4. CREATE GATEWAY SERVICE
@@ -111,7 +132,7 @@ $GATEWAY_BUILD_BLOCK$GATEWAY_PULL_POLICY_BLOCK
     ports:
       - 8989:8000
     command: >
-      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers $GATEWAY_WORKERS
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health_check"]
       interval: 30s
@@ -135,7 +156,7 @@ if [ "$ENGINE" == "ollama" ]; then
 
     cat <<EOF >> "$COMPOSE_FILE"
   vilms-ollama:
-    image: ollama/ollama:$ENGINE_TAG
+    image: $OLLAMA_IMAGE_REPO:$ENGINE_TAG
     container_name: vilms-ollama
     runtime: nvidia
     environment:
@@ -159,6 +180,12 @@ if [ "$ENGINE" == "ollama" ]; then
 EOF
 
     # Optional: print model names for clarity
+    echo " - Host platform: $HOST_PLATFORM"
+    echo " - Ollama image: $OLLAMA_IMAGE_REPO:$ENGINE_TAG"
+    if [[ "$HOST_PLATFORM" == "js" && "$EMBEDDING_ENABLED" == "true" ]]; then
+        echo "Warning: embedding.enabled=true on Jetson may exceed RAM/VRAM (default embedding model is large)."
+        echo "         Consider setting embedding.enabled=false for first bring-up."
+    fi
     for ((i=0; i<$MODEL_COUNT; i++)); do
         M_NAME="$(yq_get ".serving.models[$i].name")"
         echo " - Model declared in config: $M_NAME"
@@ -250,6 +277,8 @@ EOF
 echo "================================================"
 echo "Created $COMPOSE_FILE successfully."
 echo "Engine: $ENGINE | Chat models declared: $MODEL_COUNT"
+echo "Host platform: $HOST_PLATFORM | Gateway workers: $GATEWAY_WORKERS"
+echo "Ollama image repo: $OLLAMA_IMAGE_REPO | Engine tag: $ENGINE_TAG"
 echo "Embedding enabled: $EMBEDDING_ENABLED | Embedding model: $EMBEDDING_MODEL"
 echo "================================================"
 
