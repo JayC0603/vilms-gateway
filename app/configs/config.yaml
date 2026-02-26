@@ -1,11 +1,16 @@
 host:
-  platform: dgpu
+  platform: js #dgpu
   cuda-version: "12.6"
 
 docker:
   docker-registry: docker-registry.viais.vision
   docker-project: vilms
   docker-network: qvision
+  # Optional DNS override injected into generated services (gateway/ollama/vllm).
+  # Useful when Docker internal DNS is unstable and model pulls/downloads fail.
+  dns:
+    - 8.8.8.8
+    - 1.1.1.1
   image:
     # Optional override for Ollama image repo (useful on Jetson/aarch64).
     # Example Jetson: set to your ARM64-compatible Ollama image repo, then keep docker.tag.engine as the image tag.
@@ -33,7 +38,7 @@ serving:
       type: llm
       # Optional per-model routing override (used by gateway when mixed backends are available)
       # engine: vllm
-      aliases: [LLM_SMALL]
+      aliases: [LLM_QWEN3, LLM_DEFAULT]
       params:
         - temperature: 0.7
         - max-tokens: 1024
@@ -44,11 +49,30 @@ serving:
     - name: qwen3-vl:4b-instruct
       type: vlm
       # engine: ollama
-      aliases: [VLM_SMALL]
+      aliases: [VLM_QWEN3, VLM_DEFAULT]
       params:
         - max-frames: 8
         - temperature: 0.7
         - max-tokens: 1024
+        - stream: false
+
+    # ===== Small local-test combo (CPU/WSL friendly) =====
+    - name: qwen2.5:3b
+      type: llm
+      aliases: [LLM_SMALL]
+      params:
+        - temperature: 0.3
+        - max-tokens: 512
+        - stream: false
+
+    # Lightweight VLM for local pipeline testing.
+    - name: qwen2.5vl:3b
+      type: vlm
+      aliases: [VLM_SMALL]
+      params:
+        - max-frames: 4
+        - temperature: 0.2
+        - max-tokens: 256
         - stream: false
   # Gateway-side payload optimizer also uses this on Jetson (host.platform=js)
   # to keep only the latest N image frames in OpenAI-style vision requests.
@@ -59,20 +83,32 @@ embedding:
   # Jetson bring-up recommendation: set false first, then enable if resource budget allows.
   enabled: true
   # HF model name (if you run embeddings via transformers/sentence-transformers)
-  model: Qwen/Qwen3-Embedding-4B
+  # For local test, use a smaller multilingual model. (GGUF Q4 requires remote embedding service via base-url.)
+  model: intfloat/multilingual-e5-small
 
   # If you run a separate embedding service, enable this and point the gateway to it:
   # base-url: http://vilms-embedding:8001/v1/embeddings
 
 model-aliases:
-  LLM: Qwen3-4B-Instruct
-  VLM: Qwen3VL-4B-Instruct
-  Embedding: Qwen3-Embedding-4B
-  Embbeding: Qwen3-Embbeding-4B
-  llm: Qwen3-4B-Instruct
-  vlm: Qwen3VL-4B-Instruct
-  embedding: Qwen3-Embedding-4B
-  embbeding: Qwen3-Embbeding-4B
+  LLM: qwen2.5:3b
+  VLM: qwen2.5vl:3b
+  Embedding: intfloat/multilingual-e5-small
+  Embbeding: intfloat/multilingual-e5-small
+  llm: qwen2.5:3b
+  vlm: qwen2.5vl:3b
+  embedding: intfloat/multilingual-e5-small
+  embbeding: intfloat/multilingual-e5-small
+  LLM_SMALL: qwen2.5:3b
+  VLM_SMALL: qwen2.5vl:3b
+  LLM_DEFAULT: qwen3:4b-instruct
+  VLM_DEFAULT: qwen3-vl:4b-instruct
+  LLM_QWEN3: qwen3:4b-instruct
+  VLM_QWEN3: qwen3-vl:4b-instruct
+  qwen2.5-3b: qwen2.5:3b
+  qwen2.5-vl-3b: qwen2.5vl:3b
+  qwen25-vl-3b: qwen2.5vl:3b
+  qwen2.5vl-3b: qwen2.5vl:3b
+  multilingual-e5-small: intfloat/multilingual-e5-small
   qwen3-4b-instruct: qwen3:4b-instruct
   qwen3vl-4b-instruct: qwen3-vl:4b-instruct
   qwen3-embedding-4b: Qwen/Qwen3-Embedding-4B

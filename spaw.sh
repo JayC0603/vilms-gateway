@@ -81,6 +81,7 @@ OLLAMA_IMAGE_CFG="$(yq_get '.docker.image.ollama')"
 MODEL_COUNT="$(yq_get '.serving.models | length')"
 EMBEDDING_ENABLED="$(yq_get '.embedding.enabled')"
 EMBEDDING_MODEL="$(yq_get '.embedding.model')"
+DOCKER_DNS_TYPE="$(yq_get '.docker.dns | type')"
 
 require_non_empty "docker.docker-registry" "$REGISTRY"
 require_non_empty "docker.docker-project" "$PROJECT"
@@ -107,6 +108,70 @@ if [[ "$HOST_PLATFORM" == "js" ]]; then
     GATEWAY_WORKERS="1"
 fi
 
+# GPU runtime toggle for local/WSL compatibility.
+# Values: auto | yes | no
+OLLAMA_USE_NVIDIA_RUNTIME="${OLLAMA_USE_NVIDIA_RUNTIME:-auto}"
+VLLM_USE_NVIDIA_RUNTIME="${VLLM_USE_NVIDIA_RUNTIME:-$OLLAMA_USE_NVIDIA_RUNTIME}"
+
+has_nvidia_runtime() {
+    command -v docker >/dev/null 2>&1 || return 1
+    docker info 2>/dev/null | grep -i '^ Runtimes:' | grep -qw 'nvidia'
+}
+
+resolve_nvidia_runtime_flag() {
+    local raw="${1:-auto}"
+    case "${raw,,}" in
+        yes|y|1|true) echo "yes" ;;
+        no|n|0|false) echo "no" ;;
+        auto)
+            if has_nvidia_runtime; then
+                echo "yes"
+            else
+                echo "no"
+            fi
+            ;;
+        *)
+            echo "Warning: invalid runtime toggle '$raw' (expected auto|yes|no). Falling back to auto."
+            if has_nvidia_runtime; then echo "yes"; else echo "no"; fi
+            ;;
+    esac
+}
+
+OLLAMA_USE_NVIDIA_RUNTIME_RESOLVED="$(resolve_nvidia_runtime_flag "$OLLAMA_USE_NVIDIA_RUNTIME")"
+VLLM_USE_NVIDIA_RUNTIME_RESOLVED="$(resolve_nvidia_runtime_flag "$VLLM_USE_NVIDIA_RUNTIME")"
+
+OLLAMA_RUNTIME_BLOCK=""
+OLLAMA_ENV_BLOCK=""
+OLLAMA_DEPLOY_BLOCK=""
+if [[ "$OLLAMA_USE_NVIDIA_RUNTIME_RESOLVED" == "yes" ]]; then
+    OLLAMA_RUNTIME_BLOCK=$'    runtime: nvidia\n'
+    OLLAMA_ENV_BLOCK=$'    environment:\n      - NVIDIA_VISIBLE_DEVICES=all\n      - NVIDIA_DRIVER_CAPABILITIES=all\n'
+    OLLAMA_DEPLOY_BLOCK=$'    deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              count: 1\n              capabilities: [ gpu, utility, compute ]\n'
+fi
+
+VLLM_RUNTIME_BLOCK=""
+VLLM_ENV_BLOCK=""
+VLLM_DEPLOY_BLOCK=""
+if [[ "$VLLM_USE_NVIDIA_RUNTIME_RESOLVED" == "yes" ]]; then
+    VLLM_RUNTIME_BLOCK=$'    runtime: nvidia\n'
+    VLLM_ENV_BLOCK=$'    environment:\n      - NVIDIA_VISIBLE_DEVICES=all\n      - NVIDIA_DRIVER_CAPABILITIES=all\n'
+    VLLM_DEPLOY_BLOCK=$'    deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              count: 1\n              capabilities: [ gpu, utility, compute ]\n'
+fi
+
+SERVICE_DNS_BLOCK=""
+if [[ "$DOCKER_DNS_TYPE" == "!!seq" ]]; then
+    DNS_COUNT="$(yq_get '.docker.dns | length')"
+    if [[ -n "$DNS_COUNT" && "$DNS_COUNT" != "0" && "$DNS_COUNT" != "null" ]]; then
+        SERVICE_DNS_BLOCK=$'    dns:\n'
+        for ((i=0; i<DNS_COUNT; i++)); do
+            DNS_SERVER="$(yq_get ".docker.dns[$i]")"
+            if [[ -n "$DNS_SERVER" && "$DNS_SERVER" != "null" ]]; then
+                SERVICE_DNS_BLOCK="${SERVICE_DNS_BLOCK}      - ${DNS_SERVER}"$'\n'
+            fi
+        done
+    fi
+fi
+
 # ================================================================
 # 4. CREATE GATEWAY SERVICE
 # ================================================================
@@ -126,7 +191,7 @@ services:
     image: $REGISTRY/$PROJECT/vilms-gateway:$GW_TAG
     container_name: vilms-gateway
 $GATEWAY_BUILD_BLOCK$GATEWAY_PULL_POLICY_BLOCK
-    volumes:
+${SERVICE_DNS_BLOCK}    volumes:
       - ./app:/workspace/app
       - ./assets/models/hf:/root/.cache/huggingface
     ports:
@@ -158,23 +223,12 @@ if [ "$ENGINE" == "ollama" ]; then
   vilms-ollama:
     image: $OLLAMA_IMAGE_REPO:$ENGINE_TAG
     container_name: vilms-ollama
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-    volumes:
+$OLLAMA_RUNTIME_BLOCK$OLLAMA_ENV_BLOCK${SERVICE_DNS_BLOCK}    volumes:
       - ./assets/models/ollama:/root/.ollama
       - ./assets/models/hf:/models/hf
       - ./assets/models/gguf:/models/gguf
     command: serve
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [ gpu, utility, compute ]
-    networks:
+$OLLAMA_DEPLOY_BLOCK    networks:
       - vilms-network
 
 EOF
@@ -182,6 +236,7 @@ EOF
     # Optional: print model names for clarity
     echo " - Host platform: $HOST_PLATFORM"
     echo " - Ollama image: $OLLAMA_IMAGE_REPO:$ENGINE_TAG"
+    echo " - Ollama NVIDIA runtime: $OLLAMA_USE_NVIDIA_RUNTIME_RESOLVED (set OLLAMA_USE_NVIDIA_RUNTIME=yes|no|auto)"
     if [[ "$HOST_PLATFORM" == "js" && "$EMBEDDING_ENABLED" == "true" ]]; then
         echo "Warning: embedding.enabled=true on Jetson may exceed RAM/VRAM (default embedding model is large)."
         echo "         Consider setting embedding.enabled=false for first bring-up."
@@ -242,22 +297,11 @@ else
   vilms-$SAFE_NAME:
     image: $IMAGE
     container_name: vilms-$SAFE_NAME
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-    volumes:
+$VLLM_RUNTIME_BLOCK$VLLM_ENV_BLOCK${SERVICE_DNS_BLOCK}    volumes:
       - ./assets/models/hf:/models/hf
       - ./assets/models/gguf:/models/gguf
     command: $COMMAND
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [ gpu, utility, compute ]
-    networks:
+$VLLM_DEPLOY_BLOCK    networks:
       - vilms-network
 
 EOF
@@ -279,6 +323,10 @@ echo "Created $COMPOSE_FILE successfully."
 echo "Engine: $ENGINE | Chat models declared: $MODEL_COUNT"
 echo "Host platform: $HOST_PLATFORM | Gateway workers: $GATEWAY_WORKERS"
 echo "Ollama image repo: $OLLAMA_IMAGE_REPO | Engine tag: $ENGINE_TAG"
+echo "Ollama NVIDIA runtime: $OLLAMA_USE_NVIDIA_RUNTIME_RESOLVED | vLLM NVIDIA runtime: $VLLM_USE_NVIDIA_RUNTIME_RESOLVED"
+if [[ -n "$SERVICE_DNS_BLOCK" ]]; then
+    echo "Docker DNS override: configured via docker.dns"
+fi
 echo "Embedding enabled: $EMBEDDING_ENABLED | Embedding model: $EMBEDDING_MODEL"
 echo "================================================"
 

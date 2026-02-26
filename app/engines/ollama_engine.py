@@ -133,6 +133,47 @@ class OllamaEngine(BaseViLMSEngine):
             },
         }
 
+    @staticmethod
+    def _build_native_payload(payload: dict, native_messages: list) -> dict:
+        native_payload = {
+            "model": payload.get("model"),
+            "messages": native_messages,
+            # Gateway currently returns non-stream OpenAI-style responses.
+            "stream": False,
+        }
+
+        options = {}
+        if payload.get("temperature") is not None:
+            options["temperature"] = payload.get("temperature")
+        if payload.get("top_p") is not None:
+            options["top_p"] = payload.get("top_p")
+        if payload.get("max_tokens") is not None:
+            options["num_predict"] = payload.get("max_tokens")
+        if payload.get("stop") is not None:
+            options["stop"] = payload.get("stop")
+        if options:
+            native_payload["options"] = options
+        return native_payload
+
+    async def _post_native_chat(self, client: httpx.AsyncClient, native_payload: dict, model_name: str) -> dict:
+        tried = []
+        last_http_error = None
+        for url in [self._to_native_chat_url(u) for u in self.candidate_urls]:
+            tried.append(url)
+            try:
+                resp = await client.post(url, json=native_payload)
+                resp.raise_for_status()
+                return self._native_to_openai_response(resp.json(), model_name)
+            except httpx.RequestError:
+                continue
+            except httpx.HTTPStatusError as e:
+                last_http_error = e
+                continue
+
+        if last_http_error is not None:
+            raise RuntimeError(str(last_http_error)) from last_http_error
+        raise RuntimeError("Cannot connect to Ollama native chat backend. Tried: " + ", ".join(tried))
+
     async def chat_completion(self, payload: dict):
         # OpenAI-style payload: {model, messages, stream, ...}
         has_images = self._has_image_parts(payload)
@@ -148,39 +189,22 @@ class OllamaEngine(BaseViLMSEngine):
                 ollama_payload[k] = payload[k]
 
         async with httpx.AsyncClient(timeout=300) as client:
+            native_messages = await self._to_native_messages(client, payload.get("messages", []))
+            native_payload = self._build_native_payload(payload, native_messages)
+
             if has_images:
-                native_payload = {
-                    "model": payload.get("model"),
-                    "messages": await self._to_native_messages(client, payload.get("messages", [])),
-                    "stream": False,
-                }
-                options = {}
-                if payload.get("temperature") is not None:
-                    options["temperature"] = payload.get("temperature")
-                if payload.get("top_p") is not None:
-                    options["top_p"] = payload.get("top_p")
-                if payload.get("max_tokens") is not None:
-                    options["num_predict"] = payload.get("max_tokens")
-                if payload.get("stop") is not None:
-                    options["stop"] = payload.get("stop")
-                if options:
-                    native_payload["options"] = options
+                return await self._post_native_chat(client, native_payload, payload.get("model"))
 
-                tried = []
-                for url in [self._to_native_chat_url(u) for u in self.candidate_urls]:
-                    tried.append(url)
-                    try:
-                        resp = await client.post(url, json=native_payload)
-                        resp.raise_for_status()
-                        return self._native_to_openai_response(resp.json(), payload.get("model"))
-                    except httpx.RequestError:
-                        continue
-
-                raise RuntimeError(
-                    "Cannot connect to Ollama native chat backend. Tried: " + ", ".join(tried)
-                )
+            # Prefer native /api/chat for text too, because many Ollama versions/images
+            # (including some current defaults) do not expose OpenAI-compatible /v1 routes.
+            # Keep v1 fallback only for compatibility with setups relying on raw v1 output.
+            try:
+                return await self._post_native_chat(client, native_payload, payload.get("model"))
+            except RuntimeError:
+                pass
 
             tried = []
+            last_http_error = None
             for url in self.candidate_urls:
                 tried.append(url)
                 try:
@@ -189,6 +213,12 @@ class OllamaEngine(BaseViLMSEngine):
                     return resp.json()
                 except httpx.RequestError:
                     continue
+                except httpx.HTTPStatusError as e:
+                    last_http_error = e
+                    continue
+
+            if last_http_error is not None:
+                raise RuntimeError(str(last_http_error)) from last_http_error
 
             raise RuntimeError(
                 "Cannot connect to Ollama backend. Tried: " + ", ".join(tried) +

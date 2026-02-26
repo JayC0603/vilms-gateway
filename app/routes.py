@@ -50,7 +50,7 @@ def embeddings(req: EmbeddingRequest):
     try:
         if factory.embedding is None:
             raise HTTPException(status_code=400, detail="Embedding is disabled in config.")
-        vecs = factory.embedding.embed(inputs)
+        vecs = factory.embedding.embed(inputs, model_name=model_mapped)
         data = [EmbeddingObject(index=i, embedding=v) for i, v in enumerate(vecs)]
         return EmbeddingResponse(data=data, model=model_mapped, usage={"prompt_tokens": 0, "total_tokens": 0})
     except Exception as e:

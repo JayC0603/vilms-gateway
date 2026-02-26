@@ -2,14 +2,21 @@
 from app.config import settings
 from app.engines.ollama_engine import OllamaEngine
 from app.engines.vllm_engine import VLLMEngine
-from app.engines.embedding_engine import HFEmbeddingEngine
+from app.engines.embedding_engine import HFEmbeddingEngine, RemoteEmbeddingEngine
 
 
 class EngineFactory:
     def __init__(self):
         self.ollama = OllamaEngine(settings.OLLAMA_BASE_URL)
         self.vllm = VLLMEngine()
-        self.embedding = HFEmbeddingEngine() if settings.EMBEDDING_ENABLED else None
+        if settings.EMBEDDING_ENABLED:
+            self.embedding = (
+                RemoteEmbeddingEngine(settings.EMBEDDING_BASE_URL)
+                if getattr(settings, "EMBEDDING_BASE_URL", "").strip()
+                else HFEmbeddingEngine()
+            )
+        else:
+            self.embedding = None
 
     def get_engine(self, name: str):
         engine = (name or "").strip().lower()

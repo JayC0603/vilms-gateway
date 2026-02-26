@@ -3,13 +3,16 @@ services:
     image: docker-registry.viais.vision/vilms/vilms-gateway:latest
     container_name: vilms-gateway
     pull_policy: never
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     volumes:
       - ./app:/workspace/app
       - ./assets/models/hf:/root/.cache/huggingface
     ports:
       - 8989:8000
     command: >
-      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health_check"]
       interval: 30s
@@ -21,22 +24,14 @@ services:
   vilms-ollama:
     image: ollama/ollama:latest
     container_name: vilms-ollama
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     volumes:
       - ./assets/models/ollama:/root/.ollama
       - ./assets/models/hf:/models/hf
       - ./assets/models/gguf:/models/gguf
     command: serve
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [ gpu, utility, compute ]
     networks:
       - vilms-network
 

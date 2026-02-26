@@ -221,6 +221,11 @@ class AppConfig:
         return str(embedding.get("model", ""))
 
     @property
+    def EMBEDDING_BASE_URL(self) -> str:
+        embedding = self.data.get("embedding", {}) or {}
+        return str(embedding.get("base-url", ""))
+
+    @property
     def EMBEDDING_ENABLED(self) -> bool:
         embedding = self.data.get("embedding", {}) or {}
         return bool(embedding.get("enabled", False))
